@@ -25,6 +25,8 @@ pub struct Config {
     pub background: Color,
     #[default(Color::from_rgba_hex(0xfbf1c7ff))]
     pub color: Color,
+    pub key_color: Option<Color>,
+    pub desc_color: Option<Color>,
     #[default(Color::from_rgba_hex(0x8ec07cff))]
     pub border: Color,
 
@@ -45,6 +47,7 @@ pub struct Config {
     pub padding: Option<f64>,
     pub rows_per_column: Option<usize>,
     pub column_padding: Option<f64>,
+    pub row_padding: Option<f64>,
 
     pub inhibit_compositor_keyboard_shortcuts: bool,
     pub auto_kbd_layout: bool,
@@ -90,6 +93,18 @@ impl Config {
 
     pub fn column_padding(&self) -> f64 {
         self.column_padding.unwrap_or_else(|| self.padding())
+    }
+
+    pub fn row_padding(&self) -> f64 {
+        self.row_padding.unwrap_or(0.0)
+    }
+
+    pub fn key_color(&self) -> Color {
+        self.key_color.unwrap_or(self.color)
+    }
+
+    pub fn desc_color(&self) -> Color {
+        self.desc_color.unwrap_or(self.color)
     }
 }
 

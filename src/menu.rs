@@ -147,9 +147,13 @@ impl Menu {
 
     pub fn height(&self, config: &Config) -> f64 {
         let page = &self.pages[self.cur_page];
+        let row_padding = config.row_padding();
         page.columns
             .iter()
-            .map(|col| page.item_height * col.items.len() as f64)
+            .map(|col| {
+                page.item_height * col.items.len() as f64
+                    + row_padding * (col.items.len().saturating_sub(1)) as f64
+            })
             .max_by(f64::total_cmp)
             .unwrap()
             + (config.padding() + config.border_width) * 2.0
@@ -178,13 +182,15 @@ impl Menu {
         page: &MenuPage,
         column: &MenuColumn,
     ) -> Result<()> {
+        let row_stride = page.item_height + config.row_padding();
         for (i, comp) in column.items.iter().enumerate() {
+            let item_y = dy + row_stride * (i as f64);
             comp.key_comp.render(
                 cairo_ctx,
                 text::RenderOptions {
                     x: dx + column.key_col_width - comp.key_comp.width,
-                    y: dy + page.item_height * (i as f64),
-                    fg_color: config.color,
+                    y: item_y,
+                    fg_color: config.key_color(),
                     height: page.item_height,
                 },
             )?;
@@ -192,7 +198,7 @@ impl Menu {
                 cairo_ctx,
                 text::RenderOptions {
                     x: dx + column.key_col_width,
-                    y: dy + page.item_height * (i as f64),
+                    y: item_y,
                     fg_color: config.color,
                     height: page.item_height,
                 },
@@ -201,8 +207,8 @@ impl Menu {
                 cairo_ctx,
                 text::RenderOptions {
                     x: dx + column.key_col_width + self.separator.width,
-                    y: dy + page.item_height * (i as f64),
-                    fg_color: config.color,
+                    y: item_y,
+                    fg_color: config.desc_color(),
                     height: page.item_height,
                 },
             )?;
@@ -214,7 +220,8 @@ impl Menu {
                 dx,
                 dy,
                 column.key_col_width + column.val_col_width + self.separator.width,
-                column.items.len() as f64 * page.item_height,
+                column.items.len() as f64 * page.item_height
+                    + (column.items.len().saturating_sub(1)) as f64 * config.row_padding(),
             );
             cairo_ctx.set_line_width(1.0);
             cairo_ctx.stroke().unwrap();

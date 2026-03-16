@@ -85,6 +85,8 @@ impl From<Config> for super::Config {
         Self {
             background: value.background,
             color: value.color,
+            key_color: None,
+            desc_color: None,
             border: value.border,
             anchor: value.anchor,
             margin_top: value.margin_top,
@@ -98,6 +100,7 @@ impl From<Config> for super::Config {
             padding: value.padding,
             rows_per_column: None,
             column_padding: None,
+            row_padding: None,
             menu: map_entries(value.menu),
             inhibit_compositor_keyboard_shortcuts: false,
             auto_kbd_layout: false,
