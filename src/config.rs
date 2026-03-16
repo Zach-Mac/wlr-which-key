@@ -3,10 +3,12 @@ mod compat;
 mod entry;
 mod font;
 mod namespace;
+pub mod theme;
 
+use std::collections::HashSet;
 use std::env;
 use std::fs::read_to_string;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -16,6 +18,7 @@ pub use self::anchor::ConfigAnchor;
 pub use self::entry::Entry;
 pub use self::font::Font;
 pub use self::namespace::Namespace;
+pub use self::theme::EffectiveConfig;
 use crate::color::Color;
 
 #[derive(Deserialize, SmartDefault)]
@@ -62,6 +65,7 @@ impl Config {
     pub fn new(name: &str) -> Result<Self> {
         let mut config_path = config_dir().context("Cound not find config directory")?;
         config_path.push("wlr-which-key");
+        let config_dir = config_path.clone();
         config_path.push(name);
         config_path.set_extension("yaml");
 
@@ -69,22 +73,31 @@ impl Config {
             bail!("config file not found: {}", config_path.display());
         }
 
-        let config_str = read_to_string(config_path).context("Failed to read configuration")?;
+        let config_str =
+            read_to_string(&config_path).context("Failed to read configuration")?;
 
-        match serde_yaml::from_str::<Self>(&config_str)
+        let mut config = match serde_yaml::from_str::<Self>(&config_str)
             .context("Failed to deserialize configuration")
         {
-            Ok(config) => Ok(config),
+            Ok(config) => config,
             Err(err) => match serde_yaml::from_str::<compat::Config>(&config_str) {
                 Ok(compat) => {
                     eprintln!(
                         "Warning: using the old config format, which will be removed in a future version."
                     );
-                    Ok(compat.into())
+                    compat.into()
                 }
-                Err(_compat_err) => Err(err),
+                Err(_compat_err) => return Err(err),
             },
+        };
+
+        let mut visited = HashSet::new();
+        if let Ok(canonical) = config_path.canonicalize() {
+            visited.insert(canonical);
         }
+        config.menu = resolve_entries(config.menu, &config_dir, &mut visited)?;
+
+        Ok(config)
     }
 
     pub fn padding(&self) -> f64 {
@@ -112,4 +125,85 @@ fn config_dir() -> Option<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| Some(PathBuf::from(env::var_os("HOME")?).join(".config")))
+}
+
+fn resolve_entries(
+    entries: Vec<Entry>,
+    config_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<Vec<Entry>> {
+    entries
+        .into_iter()
+        .map(|entry| match entry {
+            Entry::ExternalSubmenu { key, file, desc } => {
+                let file_path = if Path::new(&file).is_absolute() {
+                    PathBuf::from(&file)
+                } else {
+                    config_dir.join(&file)
+                };
+                let file_path = if file_path.extension().is_none() {
+                    file_path.with_extension("yaml")
+                } else {
+                    file_path
+                };
+
+                let canonical = file_path.canonicalize().with_context(|| {
+                    format!("submenu_file not found: {}", file_path.display())
+                })?;
+
+                if !visited.insert(canonical.clone()) {
+                    bail!(
+                        "circular submenu_file include detected: {}",
+                        file_path.display()
+                    );
+                }
+
+                let content = read_to_string(&file_path).with_context(|| {
+                    format!("failed to read submenu file: {}", file_path.display())
+                })?;
+
+                let (mut sub_entries, overrides) =
+                    match serde_yaml::from_str::<Vec<Entry>>(&content) {
+                        Ok(entries) => (entries, None),
+                        Err(_) => {
+                            let sub_file: theme::SubmenuFile =
+                                serde_yaml::from_str(&content).with_context(|| {
+                                    format!(
+                                        "failed to parse submenu file: {}",
+                                        file_path.display()
+                                    )
+                                })?;
+                            let overrides = if sub_file.overrides.has_any() {
+                                Some(sub_file.overrides)
+                            } else {
+                                None
+                            };
+                            (sub_file.menu, overrides)
+                        }
+                    };
+
+                sub_entries = resolve_entries(sub_entries, config_dir, visited)?;
+                visited.remove(&canonical);
+
+                Ok(Entry::Recursive {
+                    key,
+                    submenu: sub_entries,
+                    desc,
+                    overrides,
+                })
+            }
+            Entry::Recursive {
+                key,
+                submenu,
+                desc,
+                overrides,
+            } => Ok(Entry::Recursive {
+                key,
+                submenu: resolve_entries(submenu, config_dir, visited)?,
+                desc,
+                overrides,
+            }),
+            cmd @ Entry::Cmd { .. } => Ok(cmd),
+        })
+        .collect()
 }

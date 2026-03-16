@@ -266,9 +266,12 @@ impl State {
         cairo_ctx.paint().unwrap();
         cairo_ctx.restore().unwrap();
 
+        let effective =
+            config::EffectiveConfig::new(&self.config, self.menu.current_overrides());
+
         cairo_ctx.new_sub_path();
-        let half_border = self.config.border_width * 0.5;
-        let r = self.config.corner_r;
+        let half_border = effective.border_width() * 0.5;
+        let r = effective.corner_r();
         cairo_ctx.arc(r + half_border, r + half_border, r, PI, 3.0 * FRAC_PI_2);
         cairo_ctx.arc(
             width_f - r - half_border,
@@ -292,10 +295,10 @@ impl State {
             PI,
         );
         cairo_ctx.close_path();
-        self.config.background.apply(&cairo_ctx);
+        effective.background().apply(&cairo_ctx);
         cairo_ctx.fill_preserve().unwrap();
-        self.config.border.apply(&cairo_ctx);
-        cairo_ctx.set_line_width(self.config.border_width);
+        effective.border().apply(&cairo_ctx);
+        cairo_ctx.set_line_width(effective.border_width());
         cairo_ctx.stroke().unwrap();
 
         // draw our menu

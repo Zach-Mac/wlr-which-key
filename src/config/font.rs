@@ -3,6 +3,7 @@ use std::fmt;
 use pangocairo::pango::FontDescription;
 use serde::de;
 
+#[derive(Clone)]
 pub struct Font(pub FontDescription);
 
 impl Font {

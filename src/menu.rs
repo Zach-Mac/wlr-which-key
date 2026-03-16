@@ -6,6 +6,7 @@ use wayrs_utils::keyboard::xkb;
 
 use crate::DEBUG_LAYOUT;
 use crate::color::Color;
+use crate::config::theme::{EffectiveConfig, ThemeOverrides};
 use crate::config::{self, Config};
 use crate::key::{Key, ModifierState, SingleKey};
 use crate::text::{self, ComputedText};
@@ -20,6 +21,8 @@ struct MenuPage {
     item_height: f64,
     columns: Vec<MenuColumn>,
     parent: Option<usize>,
+    overrides: ThemeOverrides,
+    separator: Option<ComputedText>,
 }
 
 struct MenuColumn {
@@ -54,7 +57,7 @@ impl Menu {
             separator: ComputedText::new(&config.separator, &context, &config.font.0),
         };
 
-        this.push_page(&context, &config.menu, config, None)?;
+        this.push_page(&context, &config.menu, config, None, ThemeOverrides::default())?;
 
         Ok(this)
     }
@@ -65,18 +68,42 @@ impl Menu {
         entries: &[config::Entry],
         config: &Config,
         parent: Option<usize>,
+        overrides: ThemeOverrides,
     ) -> Result<usize> {
         if entries.is_empty() {
             bail!("Empty menu pages are not allowed");
         }
 
+        let page_separator = if overrides.font.is_some() || overrides.separator.is_some() {
+            let effective = EffectiveConfig::new(config, &overrides);
+            Some(ComputedText::new(
+                effective.separator(),
+                context,
+                &effective.font().0,
+            ))
+        } else {
+            None
+        };
+
         let cur_page = self.pages.len();
 
+        let sep_height = page_separator
+            .as_ref()
+            .unwrap_or(&self.separator)
+            .height;
+
         self.pages.push(MenuPage {
-            item_height: self.separator.height,
+            item_height: sep_height,
             columns: Vec::new(),
             parent,
+            overrides,
+            separator: page_separator,
         });
+
+        let effective = EffectiveConfig::new(config, &self.pages[cur_page].overrides);
+        let font = effective.font().0.clone();
+        let rows_per_column = effective.rows_per_column();
+        drop(effective);
 
         for (entry_i, entry) in entries.iter().enumerate() {
             let item = match entry {
@@ -90,22 +117,28 @@ impl Menu {
                         cmd: cmd.into(),
                         keep_open: *keep_open,
                     },
-                    key_comp: ComputedText::new(key.to_string(), context, &config.font.0),
-                    val_comp: ComputedText::new(desc, context, &config.font.0),
+                    key_comp: ComputedText::new(key.to_string(), context, &font),
+                    val_comp: ComputedText::new(desc, context, &font),
                     key: key.clone(),
                 },
                 config::Entry::Recursive {
                     key,
                     submenu: entries,
                     desc,
+                    overrides,
                 } => {
-                    let new_page = self.push_page(context, entries, config, Some(cur_page))?;
+                    let child_overrides = overrides.clone().unwrap_or_default();
+                    let new_page =
+                        self.push_page(context, entries, config, Some(cur_page), child_overrides)?;
                     MenuItem {
                         action: Action::Submenu(new_page),
-                        key_comp: ComputedText::new(key.to_string(), context, &config.font.0),
-                        val_comp: ComputedText::new(format!("+{desc}"), context, &config.font.0),
+                        key_comp: ComputedText::new(key.to_string(), context, &font),
+                        val_comp: ComputedText::new(format!("+{desc}"), context, &font),
                         key: key.clone(),
                     }
+                }
+                config::Entry::ExternalSubmenu { .. } => {
+                    unreachable!("ExternalSubmenu should be resolved before menu creation")
                 }
             };
 
@@ -114,9 +147,7 @@ impl Menu {
                 self.pages[cur_page].item_height = height;
             }
 
-            let col_i = config
-                .rows_per_column
-                .map_or(0, |rows_per_column| entry_i / rows_per_column);
+            let col_i = rows_per_column.map_or(0, |rpc| entry_i / rpc);
 
             if col_i == self.pages[cur_page].columns.len() {
                 self.pages[cur_page].columns.push(MenuColumn {
@@ -135,19 +166,26 @@ impl Menu {
         Ok(cur_page)
     }
 
+    pub fn current_overrides(&self) -> &ThemeOverrides {
+        &self.pages[self.cur_page].overrides
+    }
+
     pub fn width(&self, config: &Config) -> f64 {
         let page = &self.pages[self.cur_page];
+        let effective = EffectiveConfig::new(config, &page.overrides);
+        let sep = page.separator.as_ref().unwrap_or(&self.separator);
         page.columns
             .iter()
-            .map(|col| col.key_col_width + col.val_col_width + self.separator.width)
+            .map(|col| col.key_col_width + col.val_col_width + sep.width)
             .sum::<f64>()
-            + (page.columns.len() - 1) as f64 * config.column_padding()
-            + (config.padding() + config.border_width) * 2.0
+            + (page.columns.len() - 1) as f64 * effective.column_padding()
+            + (effective.padding() + effective.border_width()) * 2.0
     }
 
     pub fn height(&self, config: &Config) -> f64 {
         let page = &self.pages[self.cur_page];
-        let row_padding = config.row_padding();
+        let effective = EffectiveConfig::new(config, &page.overrides);
+        let row_padding = effective.row_padding();
         page.columns
             .iter()
             .map(|col| {
@@ -156,33 +194,36 @@ impl Menu {
             })
             .max_by(f64::total_cmp)
             .unwrap()
-            + (config.padding() + config.border_width) * 2.0
+            + (effective.padding() + effective.border_width()) * 2.0
     }
 
     pub fn render(&self, config: &config::Config, cairo_ctx: &cairo::Context) -> Result<()> {
-        let mut dx = config.padding() + config.border_width;
-        let dy = config.padding() + config.border_width;
         let page = &self.pages[self.cur_page];
+        let effective = EffectiveConfig::new(config, &page.overrides);
+        let sep = page.separator.as_ref().unwrap_or(&self.separator);
+        let mut dx = effective.padding() + effective.border_width();
+        let dy = effective.padding() + effective.border_width();
         for col in &page.columns {
-            self.render_column(config, cairo_ctx, dx, dy, page, col)?;
+            self.render_column(&effective, cairo_ctx, dx, dy, page, col, sep)?;
             dx += col.key_col_width
                 + col.val_col_width
-                + self.separator.width
-                + config.column_padding();
+                + sep.width
+                + effective.column_padding();
         }
         Ok(())
     }
 
     fn render_column(
         &self,
-        config: &Config,
+        effective: &EffectiveConfig,
         cairo_ctx: &cairo::Context,
         dx: f64,
         dy: f64,
         page: &MenuPage,
         column: &MenuColumn,
+        sep: &ComputedText,
     ) -> Result<()> {
-        let row_stride = page.item_height + config.row_padding();
+        let row_stride = page.item_height + effective.row_padding();
         for (i, comp) in column.items.iter().enumerate() {
             let item_y = dy + row_stride * (i as f64);
             comp.key_comp.render(
@@ -190,25 +231,25 @@ impl Menu {
                 text::RenderOptions {
                     x: dx + column.key_col_width - comp.key_comp.width,
                     y: item_y,
-                    fg_color: config.key_color(),
+                    fg_color: effective.key_color(),
                     height: page.item_height,
                 },
             )?;
-            self.separator.render(
+            sep.render(
                 cairo_ctx,
                 text::RenderOptions {
                     x: dx + column.key_col_width,
                     y: item_y,
-                    fg_color: config.color,
+                    fg_color: effective.color(),
                     height: page.item_height,
                 },
             )?;
             comp.val_comp.render(
                 cairo_ctx,
                 text::RenderOptions {
-                    x: dx + column.key_col_width + self.separator.width,
+                    x: dx + column.key_col_width + sep.width,
                     y: item_y,
-                    fg_color: config.desc_color(),
+                    fg_color: effective.desc_color(),
                     height: page.item_height,
                 },
             )?;
@@ -219,9 +260,9 @@ impl Menu {
             cairo_ctx.rectangle(
                 dx,
                 dy,
-                column.key_col_width + column.val_col_width + self.separator.width,
+                column.key_col_width + column.val_col_width + sep.width,
                 column.items.len() as f64 * page.item_height
-                    + (column.items.len().saturating_sub(1)) as f64 * config.row_padding(),
+                    + (column.items.len().saturating_sub(1)) as f64 * effective.row_padding(),
             );
             cairo_ctx.set_line_width(1.0);
             cairo_ctx.stroke().unwrap();

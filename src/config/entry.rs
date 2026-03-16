@@ -1,6 +1,7 @@
-use anyhow::{Context, bail};
+use anyhow::bail;
 use serde::Deserialize;
 
+use super::theme::ThemeOverrides;
 use crate::key::Key;
 
 #[derive(Deserialize)]
@@ -16,6 +17,12 @@ pub enum Entry {
         key: Key,
         submenu: Vec<Self>,
         desc: String,
+        overrides: Option<ThemeOverrides>,
+    },
+    ExternalSubmenu {
+        key: Key,
+        file: String,
+        desc: String,
     },
 }
 
@@ -27,33 +34,47 @@ struct RawEntry {
     cmd: Option<String>,
     keep_open: Option<bool>,
     submenu: Option<Vec<Entry>>,
+    submenu_file: Option<String>,
 }
 
 impl TryFrom<RawEntry> for Entry {
     type Error = anyhow::Error;
 
     fn try_from(value: RawEntry) -> Result<Self, Self::Error> {
-        if let Some(submenu) = value.submenu {
-            if value.cmd.is_some() {
-                bail!("cannot have both 'submenu' and 'cmd'");
-            }
-            if value.keep_open.is_some() {
-                bail!("cannot have both 'submenu' and 'keep_open'");
-            }
-            Ok(Self::Recursive {
+        match (value.cmd, value.submenu, value.submenu_file) {
+            (Some(cmd), None, None) => Ok(Self::Cmd {
                 key: value.key,
-                submenu,
-                desc: value.desc,
-            })
-        } else {
-            Ok(Self::Cmd {
-                key: value.key,
-                cmd: value
-                    .cmd
-                    .context("either or 'submenu' or 'cmd' is required")?,
+                cmd,
                 desc: value.desc,
                 keep_open: value.keep_open.unwrap_or(false),
-            })
+            }),
+            (None, Some(submenu), None) => {
+                if value.keep_open.is_some() {
+                    bail!("cannot have both 'submenu' and 'keep_open'");
+                }
+                Ok(Self::Recursive {
+                    key: value.key,
+                    submenu,
+                    desc: value.desc,
+                    overrides: None,
+                })
+            }
+            (None, None, Some(file)) => {
+                if value.keep_open.is_some() {
+                    bail!("cannot have both 'submenu_file' and 'keep_open'");
+                }
+                Ok(Self::ExternalSubmenu {
+                    key: value.key,
+                    file,
+                    desc: value.desc,
+                })
+            }
+            (None, None, None) => {
+                bail!("one of 'cmd', 'submenu', or 'submenu_file' is required")
+            }
+            _ => {
+                bail!("only one of 'cmd', 'submenu', or 'submenu_file' can be specified")
+            }
         }
     }
 }

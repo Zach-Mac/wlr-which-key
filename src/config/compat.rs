@@ -77,6 +77,7 @@ impl From<Config> for super::Config {
                         key: key.into(),
                         submenu: map_entries(submenu),
                         desc,
+                        overrides: None,
                     },
                 })
                 .collect()
