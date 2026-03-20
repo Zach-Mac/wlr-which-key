@@ -174,7 +174,7 @@ fn resolve_entries(
                                     )
                                 })?;
                             let overrides = if sub_file.overrides.has_any() {
-                                Some(sub_file.overrides)
+                                Some(Box::new(sub_file.overrides))
                             } else {
                                 None
                             };

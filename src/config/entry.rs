@@ -17,7 +17,7 @@ pub enum Entry {
         key: Key,
         submenu: Vec<Self>,
         desc: String,
-        overrides: Option<ThemeOverrides>,
+        overrides: Option<Box<ThemeOverrides>>,
     },
     ExternalSubmenu {
         key: Key,

@@ -50,6 +50,10 @@ struct Args {
     /// The application will show an error and exit if the key sequence is invalid.
     #[arg(long, short = 'k')]
     initial_keys: Option<String>,
+
+    /// Touch mode: render large clickable buttons instead of key hints.
+    #[arg(long, short = 't')]
+    touch: bool,
 }
 
 static DEBUG_LAYOUT: LazyLock<bool> =
@@ -58,7 +62,8 @@ static DEBUG_LAYOUT: LazyLock<bool> =
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = config::Config::new(args.config.as_deref().unwrap_or("config"))?;
-    let mut menu = menu::Menu::new(&config)?;
+    let touch_mode = args.touch;
+    let mut menu = menu::Menu::new(&config, touch_mode)?;
 
     if let Some(initial_keys) = &args.initial_keys
         && let Some(initial_action) = menu.navigate_to_key_sequence(initial_keys)?
@@ -127,6 +132,10 @@ fn main() -> anyhow::Result<()> {
         keyboard_shortcuts_inhibit_manager,
         keyboard_shortcuts_inhibitors: HashMap::new(),
 
+        pointers: Vec::new(),
+        touches: Vec::new(),
+        pointer_pos: (0.0, 0.0),
+
         wl_surface,
         layer_surface,
         visible_on_outputs: HashSet::new(),
@@ -175,6 +184,10 @@ struct State {
     outputs: Vec<Output>,
     keyboard_shortcuts_inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1>,
     keyboard_shortcuts_inhibitors: HashMap<WlSeat, ZwpKeyboardShortcutsInhibitorV1>,
+
+    pointers: Vec<WlPointer>,
+    touches: Vec<WlTouch>,
+    pointer_pos: (f64, f64),
 
     wl_surface: WlSurface,
     layer_surface: ZwlrLayerSurfaceV1,
@@ -376,6 +389,32 @@ impl SeatHandler for State {
         let keyboard = self.keyboards.swap_remove(i);
         keyboard.destroy(conn);
     }
+
+    fn pointer_added(&mut self, conn: &mut Connection<Self>, seat: WlSeat) {
+        self.pointers
+            .push(seat.get_pointer_with_cb(conn, wl_pointer_cb));
+    }
+
+    fn pointer_removed(&mut self, conn: &mut Connection<Self>, _seat: WlSeat) {
+        if let Some(pointer) = self.pointers.pop() {
+            if pointer.version() >= 3 {
+                pointer.release(conn);
+            }
+        }
+    }
+
+    fn touch_added(&mut self, conn: &mut Connection<Self>, seat: WlSeat) {
+        self.touches
+            .push(seat.get_touch_with_cb(conn, wl_touch_cb));
+    }
+
+    fn touch_removed(&mut self, conn: &mut Connection<Self>, _seat: WlSeat) {
+        if let Some(touch) = self.touches.pop() {
+            if touch.version() >= 3 {
+                touch.release(conn);
+            }
+        }
+    }
 }
 
 impl KeyboardHandler for State {
@@ -502,6 +541,34 @@ fn layer_surface_cb(ctx: EventCtx<State, ZwlrLayerSurfaceV1>) {
             ctx.conn.break_dispatch_loop();
         }
         _ => (),
+    }
+}
+
+fn wl_pointer_cb(ctx: EventCtx<State, WlPointer>) {
+    match ctx.event {
+        wl_pointer::Event::Motion(args) => {
+            ctx.state.pointer_pos = (args.surface_x.as_f64(), args.surface_y.as_f64());
+        }
+        wl_pointer::Event::Button(args)
+            if args.state == wl_pointer::ButtonState::Pressed && args.button == 0x110 =>
+        {
+            // BTN_LEFT = 0x110
+            let (x, y) = ctx.state.pointer_pos;
+            if let Some(action) = ctx.state.menu.get_action_at(x, y, &ctx.state.config) {
+                ctx.state.handle_action(ctx.conn, action);
+            }
+        }
+        _ => (),
+    }
+}
+
+fn wl_touch_cb(ctx: EventCtx<State, WlTouch>) {
+    if let wl_touch::Event::Down(args) = ctx.event {
+        let x = args.x.as_f64();
+        let y = args.y.as_f64();
+        if let Some(action) = ctx.state.menu.get_action_at(x, y, &ctx.state.config) {
+            ctx.state.handle_action(ctx.conn, action);
+        }
     }
 }
 
