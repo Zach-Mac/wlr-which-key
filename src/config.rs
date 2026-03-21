@@ -21,6 +21,31 @@ pub use self::namespace::Namespace;
 pub use self::theme::EffectiveConfig;
 use crate::color::Color;
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum RowsPerColumn {
+    Uniform(usize),
+    Variable(Vec<usize>),
+}
+
+impl RowsPerColumn {
+    pub fn column_for_entry(&self, entry_i: usize) -> usize {
+        match self {
+            Self::Uniform(n) => entry_i / n,
+            Self::Variable(heights) => {
+                let mut remaining = entry_i;
+                for (col_i, &height) in heights.iter().enumerate() {
+                    if remaining < height {
+                        return col_i;
+                    }
+                    remaining -= height;
+                }
+                heights.len()
+            }
+        }
+    }
+}
+
 #[derive(Deserialize, SmartDefault)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
@@ -48,9 +73,25 @@ pub struct Config {
     #[default(20.0)]
     pub corner_r: f64,
     pub padding: Option<f64>,
-    pub rows_per_column: Option<usize>,
+    pub rows_per_column: Option<RowsPerColumn>,
     pub column_padding: Option<f64>,
     pub row_padding: Option<f64>,
+
+    pub button_color: Option<Color>,
+    pub button_text_color: Option<Color>,
+    pub button_border_color: Option<Color>,
+    #[default(0.0)]
+    pub button_border_width: f64,
+    #[default(8.0)]
+    pub button_corner_r: f64,
+    #[default(24.0)]
+    pub button_padding: f64,
+    #[default(16.0)]
+    pub button_padding_v: f64,
+    pub button_width: Option<f64>,
+    pub button_height: Option<f64>,
+    #[default(8.0)]
+    pub button_gap: f64,
 
     pub inhibit_compositor_keyboard_shortcuts: bool,
     pub auto_kbd_layout: bool,
@@ -118,6 +159,14 @@ impl Config {
 
     pub fn desc_color(&self) -> Color {
         self.desc_color.unwrap_or(self.color)
+    }
+
+    pub fn button_color(&self) -> Color {
+        self.button_color.unwrap_or(self.border)
+    }
+
+    pub fn button_text_color(&self) -> Color {
+        self.button_text_color.unwrap_or(self.desc_color())
     }
 }
 
@@ -202,6 +251,12 @@ fn resolve_entries(
                 submenu: resolve_entries(submenu, config_dir, visited)?,
                 desc,
                 overrides,
+            }),
+            Entry::Row { columns } => Ok(Entry::Row {
+                columns: columns
+                    .into_iter()
+                    .map(|col| resolve_entries(col, config_dir, visited))
+                    .collect::<Result<Vec<_>>>()?,
             }),
             cmd @ Entry::Cmd { .. } => Ok(cmd),
         })

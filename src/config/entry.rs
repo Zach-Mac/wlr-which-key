@@ -24,28 +24,53 @@ pub enum Entry {
         file: String,
         desc: String,
     },
+    Row {
+        columns: Vec<Vec<Self>>,
+    },
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawEntry {
-    key: Key,
-    desc: String,
+    key: Option<Key>,
+    desc: Option<String>,
     cmd: Option<String>,
     keep_open: Option<bool>,
     submenu: Option<Vec<Entry>>,
     submenu_file: Option<String>,
+    row: Option<Vec<Vec<Entry>>>,
 }
 
 impl TryFrom<RawEntry> for Entry {
     type Error = anyhow::Error;
 
     fn try_from(value: RawEntry) -> Result<Self, Self::Error> {
+        // Row entries have no key/desc and are mutually exclusive with everything else
+        if let Some(columns) = value.row {
+            if value.key.is_some()
+                || value.desc.is_some()
+                || value.cmd.is_some()
+                || value.keep_open.is_some()
+                || value.submenu.is_some()
+                || value.submenu_file.is_some()
+            {
+                bail!("'row' cannot be combined with other fields");
+            }
+            return Ok(Self::Row { columns });
+        }
+
+        let key = value
+            .key
+            .ok_or_else(|| anyhow::anyhow!("'key' is required"))?;
+        let desc = value
+            .desc
+            .ok_or_else(|| anyhow::anyhow!("'desc' is required"))?;
+
         match (value.cmd, value.submenu, value.submenu_file) {
             (Some(cmd), None, None) => Ok(Self::Cmd {
-                key: value.key,
+                key,
                 cmd,
-                desc: value.desc,
+                desc,
                 keep_open: value.keep_open.unwrap_or(false),
             }),
             (None, Some(submenu), None) => {
@@ -53,9 +78,9 @@ impl TryFrom<RawEntry> for Entry {
                     bail!("cannot have both 'submenu' and 'keep_open'");
                 }
                 Ok(Self::Recursive {
-                    key: value.key,
+                    key,
                     submenu,
-                    desc: value.desc,
+                    desc,
                     overrides: None,
                 })
             }
@@ -64,9 +89,9 @@ impl TryFrom<RawEntry> for Entry {
                     bail!("cannot have both 'submenu_file' and 'keep_open'");
                 }
                 Ok(Self::ExternalSubmenu {
-                    key: value.key,
+                    key,
                     file,
-                    desc: value.desc,
+                    desc,
                 })
             }
             (None, None, None) => {

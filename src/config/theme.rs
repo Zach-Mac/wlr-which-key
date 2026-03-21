@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::entry::Entry;
-use super::{Config, Font};
+use super::{Config, Font, RowsPerColumn};
 use crate::color::Color;
 
 #[derive(Deserialize, Default, Clone)]
@@ -19,7 +19,17 @@ pub struct ThemeOverrides {
     pub padding: Option<f64>,
     pub column_padding: Option<f64>,
     pub row_padding: Option<f64>,
-    pub rows_per_column: Option<usize>,
+    pub rows_per_column: Option<RowsPerColumn>,
+    pub button_color: Option<Color>,
+    pub button_text_color: Option<Color>,
+    pub button_border_color: Option<Color>,
+    pub button_border_width: Option<f64>,
+    pub button_corner_r: Option<f64>,
+    pub button_padding: Option<f64>,
+    pub button_padding_v: Option<f64>,
+    pub button_width: Option<f64>,
+    pub button_height: Option<f64>,
+    pub button_gap: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -98,10 +108,67 @@ impl<'a> EffectiveConfig<'a> {
         self.overrides.row_padding.unwrap_or(self.base.row_padding())
     }
 
-    pub fn rows_per_column(&self) -> Option<usize> {
+    pub fn rows_per_column(&self) -> Option<&RowsPerColumn> {
         self.overrides
             .rows_per_column
-            .or(self.base.rows_per_column)
+            .as_ref()
+            .or(self.base.rows_per_column.as_ref())
+    }
+
+    pub fn button_color(&self) -> Color {
+        self.overrides
+            .button_color
+            .unwrap_or(self.base.button_color())
+    }
+
+    pub fn button_text_color(&self) -> Color {
+        self.overrides
+            .button_text_color
+            .unwrap_or(self.base.button_text_color())
+    }
+
+    pub fn button_border_color(&self) -> Option<Color> {
+        self.overrides
+            .button_border_color
+            .or(self.base.button_border_color)
+    }
+
+    pub fn button_border_width(&self) -> f64 {
+        self.overrides
+            .button_border_width
+            .unwrap_or(self.base.button_border_width)
+    }
+
+    pub fn button_corner_r(&self) -> f64 {
+        self.overrides
+            .button_corner_r
+            .unwrap_or(self.base.button_corner_r)
+    }
+
+    pub fn button_padding(&self) -> f64 {
+        self.overrides
+            .button_padding
+            .unwrap_or(self.base.button_padding)
+    }
+
+    pub fn button_padding_v(&self) -> f64 {
+        self.overrides
+            .button_padding_v
+            .unwrap_or(self.base.button_padding_v)
+    }
+
+    pub fn button_width(&self) -> Option<f64> {
+        self.overrides.button_width.or(self.base.button_width)
+    }
+
+    pub fn button_height(&self) -> Option<f64> {
+        self.overrides.button_height.or(self.base.button_height)
+    }
+
+    pub fn button_gap(&self) -> f64 {
+        self.overrides
+            .button_gap
+            .unwrap_or(self.base.button_gap)
     }
 }
 
@@ -120,5 +187,15 @@ impl ThemeOverrides {
             || self.column_padding.is_some()
             || self.row_padding.is_some()
             || self.rows_per_column.is_some()
+            || self.button_color.is_some()
+            || self.button_text_color.is_some()
+            || self.button_border_color.is_some()
+            || self.button_border_width.is_some()
+            || self.button_corner_r.is_some()
+            || self.button_padding.is_some()
+            || self.button_padding_v.is_some()
+            || self.button_width.is_some()
+            || self.button_height.is_some()
+            || self.button_gap.is_some()
     }
 }
