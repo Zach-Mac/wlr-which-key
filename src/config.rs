@@ -103,6 +103,9 @@ pub struct Config {
     pub button_column_gap: Option<f64>,
     pub button_overflow: ButtonOverflow,
 
+    #[default(16.0 / 9.0)]
+    pub touch_grid_ratio: f64,
+
     pub use_touch_layout: bool,
 
     pub inhibit_compositor_keyboard_shortcuts: bool,

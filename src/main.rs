@@ -350,7 +350,7 @@ impl State {
                 self.width = self.menu.width(&self.config) as u32;
                 self.height = self.menu.height(&self.config) as u32;
                 self.layer_surface.set_size(conn, self.width, self.height);
-                self.wl_surface.commit(conn);
+                self.draw(conn);
             }
         }
     }

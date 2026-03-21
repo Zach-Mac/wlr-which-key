@@ -114,6 +114,7 @@ impl From<Config> for super::Config {
             button_row_gap: 8.0,
             button_column_gap: None,
             button_overflow: super::ButtonOverflow::default(),
+            touch_grid_ratio: 16.0 / 9.0,
             use_touch_layout: false,
             menu: map_entries(value.menu),
             inhibit_compositor_keyboard_shortcuts: false,

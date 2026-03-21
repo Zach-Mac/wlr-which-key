@@ -123,9 +123,15 @@ impl Menu {
                     if self.touch_mode || config.use_touch_layout {
                         // Create an explicit row section
                         if !pending_items.is_empty() {
+                            let rpc = self.resolve_rpc(
+                                &pending_items,
+                                &rows_per_column,
+                                config,
+                                cur_page,
+                            );
                             let section = Self::build_auto_section(
                                 std::mem::take(&mut pending_items),
-                                &rows_per_column,
+                                &rpc,
                                 sep_height,
                             );
                             self.pages[cur_page].sections.push(section);
@@ -163,8 +169,9 @@ impl Menu {
         }
 
         if !pending_items.is_empty() {
-            let section =
-                Self::build_auto_section(pending_items, &rows_per_column, sep_height);
+            let rpc =
+                self.resolve_rpc(&pending_items, &rows_per_column, config, cur_page);
+            let section = Self::build_auto_section(pending_items, &rpc, sep_height);
             self.pages[cur_page].sections.push(section);
         }
 
@@ -221,6 +228,72 @@ impl Menu {
                 unreachable!("Row entries should be handled at section level")
             }
         }
+    }
+
+    fn resolve_rpc(
+        &self,
+        items: &[MenuItem],
+        rows_per_column: &Option<RowsPerColumn>,
+        config: &Config,
+        page: usize,
+    ) -> Option<RowsPerColumn> {
+        if rows_per_column.is_some() || !self.touch_mode || items.len() <= 1 {
+            return rows_per_column.clone();
+        }
+        Some(Self::auto_grid_rpc(
+            items,
+            config,
+            &self.pages[page].overrides,
+        ))
+    }
+
+    fn auto_grid_rpc(
+        items: &[MenuItem],
+        config: &Config,
+        overrides: &ThemeOverrides,
+    ) -> RowsPerColumn {
+        let effective = EffectiveConfig::new(config, overrides);
+        let target_ratio = effective.touch_grid_ratio();
+        let n = items.len();
+
+        let button_pad = effective.button_padding();
+        let auto_w = items
+            .iter()
+            .map(|i| i.val_comp.width)
+            .max_by(f64::total_cmp)
+            .unwrap_or(0.0)
+            + button_pad * 2.0;
+        let button_w = match (effective.button_width(), effective.button_overflow()) {
+            (Some(w), ButtonOverflow::Ellipsize) => w,
+            (Some(w), ButtonOverflow::Fit) => w.max(auto_w),
+            (None, _) => auto_w,
+        };
+        let button_h = effective.button_height().unwrap_or_else(|| {
+            items
+                .iter()
+                .map(|i| f64::max(i.key_comp.height, i.val_comp.height))
+                .max_by(f64::total_cmp)
+                .unwrap_or(0.0)
+                + effective.button_padding_v() * 2.0
+        });
+        let col_gap = effective.button_column_gap();
+        let row_gap = effective.button_row_gap();
+
+        let mut best_cols = 1usize;
+        let mut best_diff = f64::MAX;
+        for c in 1..=n {
+            let r = (n + c - 1) / c;
+            let w = c as f64 * button_w + c.saturating_sub(1) as f64 * col_gap;
+            let h = r as f64 * button_h + r.saturating_sub(1) as f64 * row_gap;
+            let diff = (w / h - target_ratio).abs();
+            if diff < best_diff {
+                best_diff = diff;
+                best_cols = c;
+            }
+        }
+
+        let rows = (n + best_cols - 1) / best_cols;
+        RowsPerColumn::Uniform(rows)
     }
 
     fn build_auto_section(

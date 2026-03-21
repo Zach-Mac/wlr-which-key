@@ -32,6 +32,7 @@ pub struct ThemeOverrides {
     pub button_row_gap: Option<f64>,
     pub button_column_gap: Option<f64>,
     pub button_overflow: Option<ButtonOverflow>,
+    pub touch_grid_ratio: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -185,6 +186,12 @@ impl<'a> EffectiveConfig<'a> {
             .as_ref()
             .unwrap_or(&self.base.button_overflow)
     }
+
+    pub fn touch_grid_ratio(&self) -> f64 {
+        self.overrides
+            .touch_grid_ratio
+            .unwrap_or(self.base.touch_grid_ratio)
+    }
 }
 
 impl ThemeOverrides {
@@ -216,6 +223,7 @@ impl ThemeOverrides {
             button_row_gap: self.button_row_gap.or(parent.button_row_gap),
             button_column_gap: self.button_column_gap.or(parent.button_column_gap),
             button_overflow: self.button_overflow.clone().or(parent.button_overflow.clone()),
+            touch_grid_ratio: self.touch_grid_ratio.or(parent.touch_grid_ratio),
         }
     }
 
@@ -245,5 +253,6 @@ impl ThemeOverrides {
             || self.button_row_gap.is_some()
             || self.button_column_gap.is_some()
             || self.button_overflow.is_some()
+            || self.touch_grid_ratio.is_some()
     }
 }
