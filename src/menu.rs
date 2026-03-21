@@ -8,7 +8,7 @@ use wayrs_utils::keyboard::xkb;
 use crate::DEBUG_LAYOUT;
 use crate::color::Color;
 use crate::config::theme::{EffectiveConfig, ThemeOverrides};
-use crate::config::{self, Config, RowsPerColumn};
+use crate::config::{self, ButtonOverflow, Config, RowsPerColumn};
 use crate::key::{Key, ModifierState, SingleKey};
 use crate::text::{self, ComputedText};
 
@@ -120,26 +120,39 @@ impl Menu {
         for entry in entries {
             match entry {
                 config::Entry::Row { columns } => {
-                    if !pending_items.is_empty() {
-                        let section = Self::build_auto_section(
-                            std::mem::take(&mut pending_items),
-                            &rows_per_column,
-                            sep_height,
-                        );
-                        self.pages[cur_page].sections.push(section);
-                    }
-                    let mut row_columns: Vec<Vec<MenuItem>> = Vec::new();
-                    for col_entries in columns {
-                        let mut col_items = Vec::new();
-                        for e in col_entries {
-                            col_items.push(self.build_menu_item(
-                                e, context, &font, config, cur_page,
-                            )?);
+                    if self.touch_mode || config.use_touch_layout {
+                        // Create an explicit row section
+                        if !pending_items.is_empty() {
+                            let section = Self::build_auto_section(
+                                std::mem::take(&mut pending_items),
+                                &rows_per_column,
+                                sep_height,
+                            );
+                            self.pages[cur_page].sections.push(section);
                         }
-                        row_columns.push(col_items);
+                        let mut row_columns: Vec<Vec<MenuItem>> = Vec::new();
+                        for col_entries in columns {
+                            let mut col_items = Vec::new();
+                            for e in col_entries {
+                                col_items.push(self.build_menu_item(
+                                    e, context, &font, config, cur_page,
+                                )?);
+                            }
+                            row_columns.push(col_items);
+                        }
+                        let section = Self::build_row_section(row_columns, sep_height);
+                        self.pages[cur_page].sections.push(section);
+                    } else {
+                        // Flatten row entries into pending items
+                        for col_entries in columns {
+                            for e in col_entries {
+                                let item = self.build_menu_item(
+                                    e, context, &font, config, cur_page,
+                                )?;
+                                pending_items.push(item);
+                            }
+                        }
                     }
-                    let section = Self::build_row_section(row_columns, sep_height);
-                    self.pages[cur_page].sections.push(section);
                 }
                 _ => {
                     let item =
@@ -187,8 +200,11 @@ impl Menu {
                 desc,
                 overrides,
             } => {
-                let child_overrides =
-                    overrides.as_deref().cloned().unwrap_or_default();
+                let parent_overrides = &self.pages[cur_page].overrides;
+                let child_overrides = match overrides.as_deref() {
+                    Some(explicit) => explicit.merge_over(parent_overrides),
+                    None => parent_overrides.clone(),
+                };
                 let new_page =
                     self.push_page(context, entries, config, Some(cur_page), child_overrides)?;
                 Ok(MenuItem {
@@ -306,22 +322,25 @@ impl Menu {
             return 0.0;
         }
         let button_w = self.touch_button_width(section, effective);
-        button_w * n_cols as f64 + effective.column_padding() * (n_cols - 1) as f64
+        button_w * n_cols as f64 + effective.button_column_gap() * (n_cols - 1) as f64
     }
 
     fn touch_button_width(&self, section: &PageSection, effective: &EffectiveConfig) -> f64 {
-        if let Some(w) = effective.button_width() {
-            return w;
-        }
         let button_pad = effective.button_padding();
-        let max_text_width = section
+        let auto_width = section
             .columns
             .iter()
             .flat_map(|col| col.items.iter())
             .map(|item| item.val_comp.width)
             .max_by(f64::total_cmp)
-            .unwrap_or(0.0);
-        max_text_width + button_pad * 2.0
+            .unwrap_or(0.0)
+            + button_pad * 2.0;
+
+        match (effective.button_width(), effective.button_overflow()) {
+            (Some(w), ButtonOverflow::Ellipsize) => w,
+            (Some(w), ButtonOverflow::Fit) => w.max(auto_width),
+            (None, _) => auto_width,
+        }
     }
 
     fn touch_button_height(&self, effective: &EffectiveConfig, page: &MenuPage) -> f64 {
@@ -371,7 +390,7 @@ impl Menu {
 
         if self.touch_mode {
             let button_h = self.touch_button_height(&effective, page);
-            let gap = effective.button_gap().max(effective.row_padding());
+            let gap = effective.button_row_gap();
 
             let mut total = 0.0;
             for (i, section) in page.sections.iter().enumerate() {
@@ -462,13 +481,15 @@ impl Menu {
     ) -> Result<()> {
         let inset = effective.padding() + effective.border_width();
         let button_h = self.touch_button_height(effective, page);
-        let gap = effective.button_gap().max(effective.row_padding());
+        let gap = effective.button_row_gap();
+        let button_pad = effective.button_padding();
         let button_r = effective.button_corner_r();
         let button_color = effective.button_color();
         let button_text_color = effective.button_text_color();
         let button_border_color = effective.button_border_color();
         let button_border_width = effective.button_border_width();
-        let col_gap = effective.column_padding();
+        let col_gap = effective.button_column_gap();
+        let ellipsize = *effective.button_overflow() == ButtonOverflow::Ellipsize;
 
         let total_content_width = self.touch_content_width(page, effective);
 
@@ -510,10 +531,20 @@ impl Menu {
                     }
 
                     // Label (centered)
+                    let content_w = button_w - button_pad * 2.0;
+                    if ellipsize {
+                        item.val_comp.layout.set_width(content_w as i32 * pango::SCALE);
+                        item.val_comp.layout.set_ellipsize(pango::EllipsizeMode::End);
+                    }
+                    let text_w = if ellipsize {
+                        content_w.min(item.val_comp.width)
+                    } else {
+                        item.val_comp.width
+                    };
                     item.val_comp.render(
                         cairo_ctx,
                         text::RenderOptions {
-                            x: col_x + (button_w - item.val_comp.width) * 0.5,
+                            x: col_x + (button_w - text_w) * 0.5,
                             y: btn_y,
                             fg_color: button_text_color,
                             height: button_h,
@@ -629,8 +660,8 @@ impl Menu {
 
         if self.touch_mode {
             let button_h = self.touch_button_height(&effective, page);
-            let gap = effective.button_gap().max(effective.row_padding());
-            let col_gap = effective.column_padding();
+            let gap = effective.button_row_gap();
+            let col_gap = effective.button_column_gap();
             let total_content_width = self.touch_content_width(page, &effective);
 
             let mut section_y = inset;

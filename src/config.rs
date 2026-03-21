@@ -21,6 +21,14 @@ pub use self::namespace::Namespace;
 pub use self::theme::EffectiveConfig;
 use crate::color::Color;
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonOverflow {
+    #[default]
+    Fit,
+    Ellipsize,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum RowsPerColumn {
@@ -91,7 +99,11 @@ pub struct Config {
     pub button_width: Option<f64>,
     pub button_height: Option<f64>,
     #[default(8.0)]
-    pub button_gap: f64,
+    pub button_row_gap: f64,
+    pub button_column_gap: Option<f64>,
+    pub button_overflow: ButtonOverflow,
+
+    pub use_touch_layout: bool,
 
     pub inhibit_compositor_keyboard_shortcuts: bool,
     pub auto_kbd_layout: bool,
@@ -167,6 +179,10 @@ impl Config {
 
     pub fn button_text_color(&self) -> Color {
         self.button_text_color.unwrap_or(self.desc_color())
+    }
+
+    pub fn button_column_gap(&self) -> f64 {
+        self.button_column_gap.unwrap_or(self.button_row_gap)
     }
 }
 

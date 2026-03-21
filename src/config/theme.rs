@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::entry::Entry;
-use super::{Config, Font, RowsPerColumn};
+use super::{ButtonOverflow, Config, Font, RowsPerColumn};
 use crate::color::Color;
 
 #[derive(Deserialize, Default, Clone)]
@@ -29,7 +29,9 @@ pub struct ThemeOverrides {
     pub button_padding_v: Option<f64>,
     pub button_width: Option<f64>,
     pub button_height: Option<f64>,
-    pub button_gap: Option<f64>,
+    pub button_row_gap: Option<f64>,
+    pub button_column_gap: Option<f64>,
+    pub button_overflow: Option<ButtonOverflow>,
 }
 
 #[derive(Deserialize)]
@@ -165,14 +167,58 @@ impl<'a> EffectiveConfig<'a> {
         self.overrides.button_height.or(self.base.button_height)
     }
 
-    pub fn button_gap(&self) -> f64 {
+    pub fn button_row_gap(&self) -> f64 {
         self.overrides
-            .button_gap
-            .unwrap_or(self.base.button_gap)
+            .button_row_gap
+            .unwrap_or(self.base.button_row_gap)
+    }
+
+    pub fn button_column_gap(&self) -> f64 {
+        self.overrides
+            .button_column_gap
+            .unwrap_or(self.base.button_column_gap())
+    }
+
+    pub fn button_overflow(&self) -> &ButtonOverflow {
+        self.overrides
+            .button_overflow
+            .as_ref()
+            .unwrap_or(&self.base.button_overflow)
     }
 }
 
 impl ThemeOverrides {
+    /// Merge self over parent: self's values take precedence, parent fills in gaps.
+    pub fn merge_over(&self, parent: &ThemeOverrides) -> ThemeOverrides {
+        ThemeOverrides {
+            background: self.background.or(parent.background),
+            color: self.color.or(parent.color),
+            key_color: self.key_color.or(parent.key_color),
+            desc_color: self.desc_color.or(parent.desc_color),
+            border: self.border.or(parent.border),
+            font: self.font.clone().or(parent.font.clone()),
+            separator: self.separator.clone().or(parent.separator.clone()),
+            border_width: self.border_width.or(parent.border_width),
+            corner_r: self.corner_r.or(parent.corner_r),
+            padding: self.padding.or(parent.padding),
+            column_padding: self.column_padding.or(parent.column_padding),
+            row_padding: self.row_padding.or(parent.row_padding),
+            rows_per_column: self.rows_per_column.clone().or(parent.rows_per_column.clone()),
+            button_color: self.button_color.or(parent.button_color),
+            button_text_color: self.button_text_color.or(parent.button_text_color),
+            button_border_color: self.button_border_color.or(parent.button_border_color),
+            button_border_width: self.button_border_width.or(parent.button_border_width),
+            button_corner_r: self.button_corner_r.or(parent.button_corner_r),
+            button_padding: self.button_padding.or(parent.button_padding),
+            button_padding_v: self.button_padding_v.or(parent.button_padding_v),
+            button_width: self.button_width.or(parent.button_width),
+            button_height: self.button_height.or(parent.button_height),
+            button_row_gap: self.button_row_gap.or(parent.button_row_gap),
+            button_column_gap: self.button_column_gap.or(parent.button_column_gap),
+            button_overflow: self.button_overflow.clone().or(parent.button_overflow.clone()),
+        }
+    }
+
     pub fn has_any(&self) -> bool {
         self.background.is_some()
             || self.color.is_some()
@@ -196,6 +242,8 @@ impl ThemeOverrides {
             || self.button_padding_v.is_some()
             || self.button_width.is_some()
             || self.button_height.is_some()
-            || self.button_gap.is_some()
+            || self.button_row_gap.is_some()
+            || self.button_column_gap.is_some()
+            || self.button_overflow.is_some()
     }
 }
