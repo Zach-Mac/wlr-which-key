@@ -22,8 +22,10 @@ use wayrs_client::protocol::*;
 use wayrs_client::proxy::Proxy;
 use wayrs_client::{Connection, IoMode};
 use wayrs_client::{EventCtx, global::*};
+use wayrs_protocols::cursor_shape_v1::*;
 use wayrs_protocols::keyboard_shortcuts_inhibit_unstable_v1::*;
 use wayrs_protocols::wlr_layer_shell_unstable_v1::*;
+use wayrs_protocols::wlr_layer_shell_unstable_v1::zwlr_layer_surface_v1::Anchor;
 use wayrs_utils::keyboard::{Keyboard, KeyboardEvent, KeyboardHandler, xkb};
 use wayrs_utils::seats::{SeatHandler, Seats};
 use wayrs_utils::shm_alloc::{BufferSpec, ShmAlloc};
@@ -92,6 +94,8 @@ fn main() -> anyhow::Result<()> {
         false => None,
     };
 
+    let cursor_shape_manager: WpCursorShapeManagerV1 = conn.bind_singleton(1)?;
+
     let seats = Seats::new(&mut conn);
     let shm_alloc = ShmAlloc::bind(&mut conn)?;
 
@@ -108,14 +112,9 @@ fn main() -> anyhow::Result<()> {
         config.namespace.0.to_owned(),
         layer_surface_cb,
     );
-    layer_surface.set_anchor(&mut conn, config.anchor.into());
-    layer_surface.set_size(&mut conn, width, height);
-    layer_surface.set_margin(
+    layer_surface.set_anchor(
         &mut conn,
-        config.margin_top,
-        config.margin_right,
-        config.margin_bottom,
-        config.margin_left,
+        Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
     );
     layer_surface.set_keyboard_interactivity(
         &mut conn,
@@ -132,6 +131,7 @@ fn main() -> anyhow::Result<()> {
         keyboard_shortcuts_inhibit_manager,
         keyboard_shortcuts_inhibitors: HashMap::new(),
 
+        cursor_shape_manager,
         pointers: Vec::new(),
         touches: Vec::new(),
         pointer_pos: (0.0, 0.0),
@@ -142,8 +142,12 @@ fn main() -> anyhow::Result<()> {
         surface_scale: 1,
         exit: false,
         configured: false,
-        width,
-        height,
+        width: 0,
+        height: 0,
+        menu_width: width,
+        menu_height: height,
+        menu_x: 0.0,
+        menu_y: 0.0,
         throttle_cb: None,
         throttled: false,
 
@@ -185,6 +189,7 @@ struct State {
     keyboard_shortcuts_inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1>,
     keyboard_shortcuts_inhibitors: HashMap<WlSeat, ZwpKeyboardShortcutsInhibitorV1>,
 
+    cursor_shape_manager: WpCursorShapeManagerV1,
     pointers: Vec<WlPointer>,
     touches: Vec<WlTouch>,
     pointer_pos: (f64, f64),
@@ -197,6 +202,10 @@ struct State {
     configured: bool,
     width: u32,
     height: u32,
+    menu_width: u32,
+    menu_height: u32,
+    menu_x: f64,
+    menu_y: f64,
     throttle_cb: Option<WlCallback>,
     throttled: bool,
 
@@ -211,6 +220,32 @@ struct Output {
 }
 
 impl State {
+    fn update_menu_position(&mut self) {
+        let w = self.width as f64;
+        let h = self.height as f64;
+        let mw = self.menu_width as f64;
+        let mh = self.menu_height as f64;
+        let mt = self.config.margin_top as f64;
+        let mr = self.config.margin_right as f64;
+        let mb = self.config.margin_bottom as f64;
+        let ml = self.config.margin_left as f64;
+
+        let (x, y) = match self.config.anchor {
+            config::ConfigAnchor::Center => ((w - mw) / 2.0, (h - mh) / 2.0),
+            config::ConfigAnchor::Top => ((w - mw) / 2.0, mt),
+            config::ConfigAnchor::Bottom => ((w - mw) / 2.0, h - mh - mb),
+            config::ConfigAnchor::Left => (ml, (h - mh) / 2.0),
+            config::ConfigAnchor::Right => (w - mw - mr, (h - mh) / 2.0),
+            config::ConfigAnchor::TopLeft => (ml, mt),
+            config::ConfigAnchor::TopRight => (w - mw - mr, mt),
+            config::ConfigAnchor::BottomLeft => (ml, h - mh - mb),
+            config::ConfigAnchor::BottomRight => (w - mw - mr, h - mh - mb),
+        };
+
+        self.menu_x = x;
+        self.menu_y = y;
+    }
+
     fn draw(&mut self, conn: &mut Connection<Self>) {
         if !self.configured {
             return;
@@ -241,8 +276,8 @@ impl State {
                 .unwrap_or(1)
         };
 
-        let width_f = self.width as f64;
-        let height_f = self.height as f64;
+        let menu_w = self.menu_width as f64;
+        let menu_h = self.menu_height as f64;
 
         let (buffer, canvas) = self
             .shm_alloc
@@ -282,27 +317,31 @@ impl State {
         let effective =
             config::EffectiveConfig::new(&self.config, self.menu.current_overrides());
 
+        // Translate to menu position within full-screen surface
+        cairo_ctx.save().unwrap();
+        cairo_ctx.translate(self.menu_x, self.menu_y);
+
         cairo_ctx.new_sub_path();
         let half_border = effective.border_width() * 0.5;
         let r = effective.corner_r();
         cairo_ctx.arc(r + half_border, r + half_border, r, PI, 3.0 * FRAC_PI_2);
         cairo_ctx.arc(
-            width_f - r - half_border,
+            menu_w - r - half_border,
             r + half_border,
             r,
             3.0 * FRAC_PI_2,
             TAU,
         );
         cairo_ctx.arc(
-            width_f - r - half_border,
-            height_f - r - half_border,
+            menu_w - r - half_border,
+            menu_h - r - half_border,
             r,
             0.0,
             FRAC_PI_2,
         );
         cairo_ctx.arc(
             r + half_border,
-            height_f - r - half_border,
+            menu_h - r - half_border,
             r,
             FRAC_PI_2,
             PI,
@@ -316,6 +355,8 @@ impl State {
 
         // draw our menu
         self.menu.render(&self.config, &cairo_ctx).unwrap();
+
+        cairo_ctx.restore().unwrap();
 
         // Damage the entire window
         self.wl_surface.damage_buffer(
@@ -347,9 +388,9 @@ impl State {
             }
             menu::Action::Submenu(page) => {
                 self.menu.set_page(page);
-                self.width = self.menu.width(&self.config) as u32;
-                self.height = self.menu.height(&self.config) as u32;
-                self.layer_surface.set_size(conn, self.width, self.height);
+                self.menu_width = self.menu.width(&self.config) as u32;
+                self.menu_height = self.menu.height(&self.config) as u32;
+                self.update_menu_position();
                 self.draw(conn);
             }
         }
@@ -533,6 +574,7 @@ fn layer_surface_cb(ctx: EventCtx<State, ZwlrLayerSurfaceV1>) {
                 ctx.state.height = args.height;
             }
             ctx.state.configured = true;
+            ctx.state.update_menu_position();
             ctx.proxy.ack_configure(ctx.conn, args.serial);
             ctx.state.draw(ctx.conn);
         }
@@ -546,6 +588,19 @@ fn layer_surface_cb(ctx: EventCtx<State, ZwlrLayerSurfaceV1>) {
 
 fn wl_pointer_cb(ctx: EventCtx<State, WlPointer>) {
     match ctx.event {
+        wl_pointer::Event::Enter(args) => {
+            let cursor_shape_device = ctx
+                .state
+                .cursor_shape_manager
+                .get_pointer(ctx.conn, ctx.proxy);
+            cursor_shape_device.set_shape(
+                ctx.conn,
+                args.serial,
+                wp_cursor_shape_device_v1::Shape::Default,
+            );
+            cursor_shape_device.destroy(ctx.conn);
+            ctx.state.pointer_pos = (args.surface_x.as_f64(), args.surface_y.as_f64());
+        }
         wl_pointer::Event::Motion(args) => {
             ctx.state.pointer_pos = (args.surface_x.as_f64(), args.surface_y.as_f64());
         }
@@ -554,7 +609,19 @@ fn wl_pointer_cb(ctx: EventCtx<State, WlPointer>) {
         {
             // BTN_LEFT = 0x110
             let (x, y) = ctx.state.pointer_pos;
-            if let Some(action) = ctx.state.menu.get_action_at(x, y, &ctx.state.config) {
+            let local_x = x - ctx.state.menu_x;
+            let local_y = y - ctx.state.menu_y;
+            if local_x < 0.0
+                || local_y < 0.0
+                || local_x > ctx.state.menu_width as f64
+                || local_y > ctx.state.menu_height as f64
+            {
+                ctx.state.handle_action(ctx.conn, menu::Action::Quit);
+            } else if let Some(action) =
+                ctx.state
+                    .menu
+                    .get_action_at(local_x, local_y, &ctx.state.config)
+            {
                 ctx.state.handle_action(ctx.conn, action);
             }
         }
@@ -566,7 +633,19 @@ fn wl_touch_cb(ctx: EventCtx<State, WlTouch>) {
     if let wl_touch::Event::Down(args) = ctx.event {
         let x = args.x.as_f64();
         let y = args.y.as_f64();
-        if let Some(action) = ctx.state.menu.get_action_at(x, y, &ctx.state.config) {
+        let local_x = x - ctx.state.menu_x;
+        let local_y = y - ctx.state.menu_y;
+        if local_x < 0.0
+            || local_y < 0.0
+            || local_x > ctx.state.menu_width as f64
+            || local_y > ctx.state.menu_height as f64
+        {
+            ctx.state.handle_action(ctx.conn, menu::Action::Quit);
+        } else if let Some(action) =
+            ctx.state
+                .menu
+                .get_action_at(local_x, local_y, &ctx.state.config)
+        {
             ctx.state.handle_action(ctx.conn, action);
         }
     }

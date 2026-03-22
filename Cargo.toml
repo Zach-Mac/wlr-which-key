@@ -19,6 +19,7 @@ wayrs-client = "1.0"
 wayrs-protocols = { version = "0.14", features = [
     "wlr-layer-shell-unstable-v1",
     "keyboard-shortcuts-inhibit-unstable-v1",
+    "cursor-shape-v1",
 ] }
 wayrs-utils = { version = "0.17", features = [
     "shm_alloc",

@@ -1,5 +1,4 @@
 Word wrapping for touch buttons
-Touches and clicks outside window should close it
 Scale window based on size of monitor
 Does auto-grid take into account the back button?
 Make back button location configurable and itself optional
