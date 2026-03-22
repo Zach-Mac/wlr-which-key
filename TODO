@@ -1,4 +1,7 @@
-Document order of operations for layout. Maybe flowchart.
 Word wrapping for touch buttons
 Touches and clicks outside window should close it
 Scale window based on size of monitor
+Does auto-grid take into account the back button?
+Make back button location configurable and itself optional
+Configurable outside window click being close, back or noop
+Add a history thing so that its possible to open app from where you left off last time
