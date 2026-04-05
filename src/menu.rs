@@ -120,7 +120,8 @@ impl Menu {
         for entry in entries {
             match entry {
                 config::Entry::Row { columns } => {
-                    if self.touch_mode || config.use_touch_layout {
+                    let effective = EffectiveConfig::new(config, &self.pages[cur_page].overrides);
+                    if self.touch_mode || effective.use_touch_layout() {
                         // Create an explicit row section
                         if !pending_items.is_empty() {
                             let rpc = self.resolve_rpc(
@@ -173,6 +174,26 @@ impl Menu {
                 self.resolve_rpc(&pending_items, &rows_per_column, config, cur_page);
             let section = Self::build_auto_section(pending_items, &rpc, sep_height);
             self.pages[cur_page].sections.push(section);
+        }
+
+        // Align column widths across all sections on this page
+        let sections = &mut self.pages[cur_page].sections;
+        let max_cols = sections.iter().map(|s| s.columns.len()).max().unwrap_or(0);
+        for col_i in 0..max_cols {
+            let mut max_key_w = 0.0f64;
+            let mut max_val_w = 0.0f64;
+            for section in sections.iter() {
+                if let Some(col) = section.columns.get(col_i) {
+                    max_key_w = max_key_w.max(col.key_col_width);
+                    max_val_w = max_val_w.max(col.val_col_width);
+                }
+            }
+            for section in sections.iter_mut() {
+                if let Some(col) = section.columns.get_mut(col_i) {
+                    col.key_col_width = max_key_w;
+                    col.val_col_width = max_val_w;
+                }
+            }
         }
 
         Ok(cur_page)

@@ -1,6 +1,13 @@
 Word wrapping for touch buttons
+Setting to show/hide key in touch button
+Setting to set location of key in nontouch (useful for layout and scale having it on top)
+
 Scale window based on size of monitor
+    - Should def cap the size of the window to the monitor size
+    - In touch mode scaling always might make sense
 Does auto-grid take into account the back button?
 Make back button location configurable and itself optional
 Configurable outside window click being close, back or noop
 Add a history thing so that its possible to open app from where you left off last time
+
+Be able to retrieve information and display it, ie can see current active setting in a list of settings or current volume/brightness, etc
