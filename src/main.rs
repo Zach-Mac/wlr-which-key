@@ -24,8 +24,8 @@ use wayrs_client::{Connection, IoMode};
 use wayrs_client::{EventCtx, global::*};
 use wayrs_protocols::cursor_shape_v1::*;
 use wayrs_protocols::keyboard_shortcuts_inhibit_unstable_v1::*;
-use wayrs_protocols::wlr_layer_shell_unstable_v1::*;
 use wayrs_protocols::wlr_layer_shell_unstable_v1::zwlr_layer_surface_v1::Anchor;
+use wayrs_protocols::wlr_layer_shell_unstable_v1::*;
 use wayrs_utils::keyboard::{Keyboard, KeyboardEvent, KeyboardHandler, xkb};
 use wayrs_utils::seats::{SeatHandler, Seats};
 use wayrs_utils::shm_alloc::{BufferSpec, ShmAlloc};
@@ -56,6 +56,15 @@ struct Args {
     /// Touch mode: render large clickable buttons instead of key hints.
     #[arg(long, short = 't')]
     touch: bool,
+
+    /// Anchor the menu to a side of the screen, overriding the config's
+    /// `anchor` for this launch.
+    ///
+    /// One of: center, top, bottom, left, right, top-left, top-right,
+    /// bottom-left, bottom-right. The gap from the edge comes from the
+    /// matching `margin_*` config field.
+    #[arg(long, short = 'a')]
+    anchor: Option<config::ConfigAnchor>,
 }
 
 static DEBUG_LAYOUT: LazyLock<bool> =
@@ -63,7 +72,10 @@ static DEBUG_LAYOUT: LazyLock<bool> =
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config = config::Config::new(args.config.as_deref().unwrap_or("config"))?;
+    let mut config = config::Config::new(args.config.as_deref().unwrap_or("config"))?;
+    if let Some(anchor) = args.anchor {
+        config.anchor = anchor;
+    }
     let touch_mode = args.touch;
     let mut menu = menu::Menu::new(&config, touch_mode)?;
 
@@ -314,8 +326,7 @@ impl State {
         cairo_ctx.paint().unwrap();
         cairo_ctx.restore().unwrap();
 
-        let effective =
-            config::EffectiveConfig::new(&self.config, self.menu.current_overrides());
+        let effective = config::EffectiveConfig::new(&self.config, self.menu.current_overrides());
 
         // Translate to menu position within full-screen surface
         cairo_ctx.save().unwrap();
@@ -339,13 +350,7 @@ impl State {
             0.0,
             FRAC_PI_2,
         );
-        cairo_ctx.arc(
-            r + half_border,
-            menu_h - r - half_border,
-            r,
-            FRAC_PI_2,
-            PI,
-        );
+        cairo_ctx.arc(r + half_border, menu_h - r - half_border, r, FRAC_PI_2, PI);
         cairo_ctx.close_path();
         effective.background().apply(&cairo_ctx);
         cairo_ctx.fill_preserve().unwrap();
@@ -445,8 +450,7 @@ impl SeatHandler for State {
     }
 
     fn touch_added(&mut self, conn: &mut Connection<Self>, seat: WlSeat) {
-        self.touches
-            .push(seat.get_touch_with_cb(conn, wl_touch_cb));
+        self.touches.push(seat.get_touch_with_cb(conn, wl_touch_cb));
     }
 
     fn touch_removed(&mut self, conn: &mut Connection<Self>, _seat: WlSeat) {

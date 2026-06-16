@@ -4,7 +4,7 @@ use wayrs_protocols::wlr_layer_shell_unstable_v1::zwlr_layer_surface_v1::Anchor;
 /// Light wrapper around `Anchor` which also supports the "no anchor" value.
 ///
 /// This type is also requires to derive `Deserialize` for the foreign type.
-#[derive(Deserialize, Default, Clone, Copy)]
+#[derive(Deserialize, Default, Clone, Copy, Debug, clap::ValueEnum)]
 #[serde(rename_all(deserialize = "kebab-case"))]
 pub enum ConfigAnchor {
     #[default]
