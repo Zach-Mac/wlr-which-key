@@ -69,12 +69,14 @@ impl From<Config> for super::Config {
                         keep_open,
                     } => super::Entry::Cmd {
                         key: key.into(),
+                        key_label: None,
                         cmd,
                         desc,
                         keep_open,
                     },
                     Entry::Recursive { submenu, desc } => super::Entry::Recursive {
                         key: key.into(),
+                        key_label: None,
                         submenu: map_entries(submenu),
                         desc,
                         overrides: None,

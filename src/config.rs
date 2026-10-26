@@ -203,7 +203,7 @@ fn resolve_entries(
     entries
         .into_iter()
         .map(|entry| match entry {
-            Entry::ExternalSubmenu { key, file, desc } => {
+            Entry::ExternalSubmenu { key, key_label, file, desc } => {
                 let file_path = if Path::new(&file).is_absolute() {
                     PathBuf::from(&file)
                 } else {
@@ -255,6 +255,7 @@ fn resolve_entries(
 
                 Ok(Entry::Recursive {
                     key,
+                    key_label,
                     submenu: sub_entries,
                     desc,
                     overrides,
@@ -262,11 +263,13 @@ fn resolve_entries(
             }
             Entry::Recursive {
                 key,
+                key_label,
                 submenu,
                 desc,
                 overrides,
             } => Ok(Entry::Recursive {
                 key,
+                key_label,
                 submenu: resolve_entries(submenu, config_dir, visited)?,
                 desc,
                 overrides,

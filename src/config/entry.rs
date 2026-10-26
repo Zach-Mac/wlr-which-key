@@ -9,18 +9,21 @@ use crate::key::Key;
 pub enum Entry {
     Cmd {
         key: Key,
+        key_label: Option<String>,
         cmd: String,
         desc: String,
         keep_open: bool,
     },
     Recursive {
         key: Key,
+        key_label: Option<String>,
         submenu: Vec<Self>,
         desc: String,
         overrides: Option<Box<ThemeOverrides>>,
     },
     ExternalSubmenu {
         key: Key,
+        key_label: Option<String>,
         file: String,
         desc: String,
     },
@@ -33,6 +36,7 @@ pub enum Entry {
 #[serde(deny_unknown_fields)]
 struct RawEntry {
     key: Option<Key>,
+    key_label: Option<String>,
     desc: Option<String>,
     cmd: Option<String>,
     keep_open: Option<bool>,
@@ -48,6 +52,7 @@ impl TryFrom<RawEntry> for Entry {
         // Row entries have no key/desc and are mutually exclusive with everything else
         if let Some(columns) = value.row {
             if value.key.is_some()
+                || value.key_label.is_some()
                 || value.desc.is_some()
                 || value.cmd.is_some()
                 || value.keep_open.is_some()
@@ -69,6 +74,7 @@ impl TryFrom<RawEntry> for Entry {
         match (value.cmd, value.submenu, value.submenu_file) {
             (Some(cmd), None, None) => Ok(Self::Cmd {
                 key,
+                key_label: value.key_label,
                 cmd,
                 desc,
                 keep_open: value.keep_open.unwrap_or(false),
@@ -79,6 +85,7 @@ impl TryFrom<RawEntry> for Entry {
                 }
                 Ok(Self::Recursive {
                     key,
+                    key_label: value.key_label,
                     submenu,
                     desc,
                     overrides: None,
@@ -90,6 +97,7 @@ impl TryFrom<RawEntry> for Entry {
                 }
                 Ok(Self::ExternalSubmenu {
                     key,
+                    key_label: value.key_label,
                     file,
                     desc,
                 })

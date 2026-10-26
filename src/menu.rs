@@ -210,6 +210,7 @@ impl Menu {
         match entry {
             config::Entry::Cmd {
                 key,
+                key_label,
                 cmd,
                 desc,
                 keep_open,
@@ -218,12 +219,17 @@ impl Menu {
                     cmd: cmd.into(),
                     keep_open: *keep_open,
                 },
-                key_comp: ComputedText::new(key.to_string(), context, font),
+                key_comp: ComputedText::new(
+                    key_label.as_deref().unwrap_or(&key.to_string()),
+                    context,
+                    font,
+                ),
                 val_comp: ComputedText::new(desc, context, font),
                 key: key.clone(),
             }),
             config::Entry::Recursive {
                 key,
+                key_label,
                 submenu: entries,
                 desc,
                 overrides,
@@ -237,7 +243,11 @@ impl Menu {
                     self.push_page(context, entries, config, Some(cur_page), child_overrides)?;
                 Ok(MenuItem {
                     action: Action::Submenu(new_page),
-                    key_comp: ComputedText::new(key.to_string(), context, font),
+                    key_comp: ComputedText::new(
+                        key_label.as_deref().unwrap_or(&key.to_string()),
+                        context,
+                        font,
+                    ),
                     val_comp: ComputedText::new(format!("+{desc}"), context, font),
                     key: key.clone(),
                 })
