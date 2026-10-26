@@ -53,6 +53,16 @@ pub enum Action {
     Submenu(usize),
 }
 
+impl Action {
+    pub fn closes_menu(&self) -> bool {
+        match self {
+            Self::Quit => true,
+            Self::Exec { keep_open, .. } => !keep_open,
+            Self::Submenu(_) => false,
+        }
+    }
+}
+
 impl Menu {
     pub fn new(config: &Config, touch_mode: bool) -> Result<Self> {
         let context = pango::Context::new();

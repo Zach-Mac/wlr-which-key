@@ -139,6 +139,7 @@ fn main() -> anyhow::Result<()> {
         seats,
         keyboards: Vec::new(),
         kbd_repeat: None,
+        pending_close: None,
         outputs: Vec::new(),
         keyboard_shortcuts_inhibit_manager,
         keyboard_shortcuts_inhibitors: HashMap::new(),
@@ -197,6 +198,7 @@ struct State {
     seats: Seats,
     keyboards: Vec<Keyboard>,
     kbd_repeat: Option<(Timer, menu::Action)>,
+    pending_close: Option<(xkb::Keycode, menu::Action)>,
     outputs: Vec<Output>,
     keyboard_shortcuts_inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1>,
     keyboard_shortcuts_inhibitors: HashMap<WlSeat, ZwpKeyboardShortcutsInhibitorV1>,
@@ -379,18 +381,10 @@ impl State {
     }
 
     fn handle_action(&mut self, conn: &mut Connection<Self>, action: menu::Action) {
+        let closes = action.closes_menu();
         match action {
-            menu::Action::Quit => {
-                self.exit = true;
-                conn.break_dispatch_loop();
-            }
-            menu::Action::Exec { cmd, keep_open } => {
-                exec(&cmd);
-                if !keep_open {
-                    self.exit = true;
-                    conn.break_dispatch_loop();
-                }
-            }
+            menu::Action::Quit => (),
+            menu::Action::Exec { cmd, .. } => exec(&cmd),
             menu::Action::Submenu(page) => {
                 self.menu.set_page(page);
                 self.menu_width = self.menu.width(&self.config) as u32;
@@ -398,6 +392,10 @@ impl State {
                 self.update_menu_position();
                 self.draw(conn);
             }
+        }
+        if closes {
+            self.exit = true;
+            conn.break_dispatch_loop();
         }
     }
 }
@@ -495,6 +493,13 @@ impl KeyboardHandler for State {
             None
         };
         if let Some(action) = action {
+            // Closing on press leaves the key held, so the compositor hands it to the
+            // window underneath on refocus. Deferring the cmd too keeps the menu from
+            // lingering on screen while it runs (screenshots).
+            if action.closes_menu() {
+                self.pending_close = Some((event.keycode, action));
+                return;
+            }
             if let Some(repeat) = event.repeat_info {
                 self.kbd_repeat = Some((Timer::new(repeat.delay, repeat.interval), action.clone()));
             }
@@ -502,8 +507,14 @@ impl KeyboardHandler for State {
         }
     }
 
-    fn key_released(&mut self, _: &mut Connection<Self>, _: KeyboardEvent) {
+    fn key_released(&mut self, conn: &mut Connection<Self>, event: KeyboardEvent) {
         self.kbd_repeat = None;
+        if let Some((_, action)) = self
+            .pending_close
+            .take_if(|(keycode, _)| *keycode == event.keycode)
+        {
+            self.handle_action(conn, action);
+        }
     }
 }
 
