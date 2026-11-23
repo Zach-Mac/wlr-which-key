@@ -76,24 +76,6 @@ fn main() -> anyhow::Result<()> {
     if let Some(anchor) = args.anchor {
         config.anchor = anchor;
     }
-    let touch_mode = args.touch;
-    let mut menu = menu::Menu::new(&config, touch_mode)?;
-
-    if let Some(initial_keys) = &args.initial_keys
-        && let Some(initial_action) = menu.navigate_to_key_sequence(initial_keys)?
-    {
-        match initial_action {
-            menu::Action::Submenu(_) => unreachable!(),
-            menu::Action::Quit => return Ok(()),
-            menu::Action::Exec { cmd, keep_open } => {
-                if keep_open {
-                    bail!("Initial key sequence cannot trigger an action with keep_open=true");
-                }
-                exec(&cmd);
-                return Ok(());
-            }
-        }
-    }
 
     let mut conn = Connection::connect()?;
     conn.blocking_roundtrip()?;
@@ -110,9 +92,6 @@ fn main() -> anyhow::Result<()> {
 
     let seats = Seats::new(&mut conn);
     let shm_alloc = ShmAlloc::bind(&mut conn)?;
-
-    let width = menu.width(&config) as u32;
-    let height = menu.height(&config) as u32;
 
     let wl_surface = wl_compositor.create_surface_with_cb(&mut conn, wl_surface_cb);
 
@@ -157,16 +136,49 @@ fn main() -> anyhow::Result<()> {
         configured: false,
         width: 0,
         height: 0,
-        menu_width: width,
-        menu_height: height,
+        menu_width: 0,
+        menu_height: 0,
         menu_x: 0.0,
         menu_y: 0.0,
         throttle_cb: None,
         throttled: false,
 
-        menu,
+        menu: None,
         config,
     };
+
+    // Hyprland moves keyboard focus to a layer surface when it maps, and mapping
+    // needs a buffer. Map a blank frame before building the menu, the slow part of
+    // startup, so keys typed meanwhile wait in the socket for the menu instead of
+    // reaching the window underneath.
+    while !state.configured && !state.exit {
+        conn.flush(IoMode::Blocking)?;
+        conn.recv_events(IoMode::Blocking)?;
+        conn.dispatch_events(&mut state);
+    }
+    if state.exit {
+        return Ok(());
+    }
+    conn.flush(IoMode::Blocking)?;
+
+    let mut menu = menu::Menu::new(&state.config, args.touch)?;
+    if let Some(initial_keys) = &args.initial_keys
+        && let Some(initial_action) = menu.navigate_to_key_sequence(initial_keys)?
+    {
+        match initial_action {
+            menu::Action::Submenu(_) => unreachable!(),
+            menu::Action::Quit => return Ok(()),
+            menu::Action::Exec { cmd, keep_open } => {
+                if keep_open {
+                    bail!("Initial key sequence cannot trigger an action with keep_open=true");
+                }
+                exec(&cmd);
+                return Ok(());
+            }
+        }
+    }
+    state.menu = Some(menu);
+    state.fit_to_page(&mut conn);
 
     while !state.exit {
         conn.flush(IoMode::Blocking)?;
@@ -223,7 +235,7 @@ struct State {
     throttle_cb: Option<WlCallback>,
     throttled: bool,
 
-    menu: menu::Menu,
+    menu: Option<menu::Menu>,
     config: config::Config,
 }
 
@@ -234,6 +246,23 @@ struct Output {
 }
 
 impl State {
+    // Input reaches the surface only after it maps, and `main` builds the menu
+    // before dispatching any event that follows the map.
+    fn menu(&self) -> &menu::Menu {
+        self.menu.as_ref().expect("menu is built before input arrives")
+    }
+
+    fn menu_mut(&mut self) -> &mut menu::Menu {
+        self.menu.as_mut().expect("menu is built before input arrives")
+    }
+
+    fn fit_to_page(&mut self, conn: &mut Connection<Self>) {
+        self.menu_width = self.menu().width(&self.config) as u32;
+        self.menu_height = self.menu().height(&self.config) as u32;
+        self.update_menu_position();
+        self.draw(conn);
+    }
+
     fn update_menu_position(&mut self) {
         let w = self.width as f64;
         let h = self.height as f64;
@@ -262,6 +291,11 @@ impl State {
 
     fn draw(&mut self, conn: &mut Connection<Self>) {
         if !self.configured {
+            return;
+        }
+
+        if self.menu.is_none() {
+            self.draw_blank(conn);
             return;
         }
 
@@ -328,7 +362,7 @@ impl State {
         cairo_ctx.paint().unwrap();
         cairo_ctx.restore().unwrap();
 
-        let effective = config::EffectiveConfig::new(&self.config, self.menu.current_overrides());
+        let effective = config::EffectiveConfig::new(&self.config, self.menu().current_overrides());
 
         // Translate to menu position within full-screen surface
         cairo_ctx.save().unwrap();
@@ -361,7 +395,7 @@ impl State {
         cairo_ctx.stroke().unwrap();
 
         // draw our menu
-        self.menu.render(&self.config, &cairo_ctx).unwrap();
+        self.menu().render(&self.config, &cairo_ctx).unwrap();
 
         cairo_ctx.restore().unwrap();
 
@@ -380,17 +414,36 @@ impl State {
         self.wl_surface.commit(conn);
     }
 
+    // A 1x1 buffer maps the surface as well as a full-screen one, without
+    // allocating and clearing a whole screen of pixels first.
+    fn draw_blank(&mut self, conn: &mut Connection<Self>) {
+        let (buffer, canvas) = self
+            .shm_alloc
+            .alloc_buffer(
+                conn,
+                BufferSpec {
+                    width: 1,
+                    height: 1,
+                    stride: 4,
+                    format: wl_shm::Format::Argb8888,
+                },
+            )
+            .expect("could not allocate blank shm buffer");
+        canvas.fill(0);
+        self.wl_surface.damage_buffer(conn, 0, 0, 1, 1);
+        self.wl_surface
+            .attach(conn, Some(buffer.into_wl_buffer()), 0, 0);
+        self.wl_surface.commit(conn);
+    }
+
     fn handle_action(&mut self, conn: &mut Connection<Self>, action: menu::Action) {
         let closes = action.closes_menu();
         match action {
             menu::Action::Quit => (),
             menu::Action::Exec { cmd, .. } => exec(&cmd),
             menu::Action::Submenu(page) => {
-                self.menu.set_page(page);
-                self.menu_width = self.menu.width(&self.config) as u32;
-                self.menu_height = self.menu.height(&self.config) as u32;
-                self.update_menu_position();
-                self.draw(conn);
+                self.menu_mut().set_page(page);
+                self.fit_to_page(conn);
             }
         }
         if closes {
@@ -471,7 +524,7 @@ impl KeyboardHandler for State {
     fn key_presed(&mut self, conn: &mut Connection<Self>, event: KeyboardEvent) {
         self.kbd_repeat = None;
         let modifiers = ModifierState::from_xkb_state(&event.xkb_state);
-        let action = if let Some(action) = self.menu.get_action(modifiers, event.keysym) {
+        let action = if let Some(action) = self.menu().get_action(modifiers, event.keysym) {
             Some(action)
         } else if self.config.auto_kbd_layout {
             let mask = XkbMaskState::new(&event.xkb_state);
@@ -480,7 +533,7 @@ impl KeyboardHandler for State {
             for layout in 0..event.xkb_state.get_keymap().num_layouts() {
                 mask.with_locked_layout(layout).apply(&event.xkb_state);
                 if let Some(a) = self
-                    .menu
+                    .menu()
                     .get_action(modifiers, event.xkb_state.key_get_one_sym(event.keycode))
                 {
                     action = Some(a);
@@ -634,7 +687,7 @@ fn wl_pointer_cb(ctx: EventCtx<State, WlPointer>) {
                 ctx.state.handle_action(ctx.conn, menu::Action::Quit);
             } else if let Some(action) =
                 ctx.state
-                    .menu
+                    .menu()
                     .get_action_at(local_x, local_y, &ctx.state.config)
             {
                 ctx.state.handle_action(ctx.conn, action);
@@ -658,7 +711,7 @@ fn wl_touch_cb(ctx: EventCtx<State, WlTouch>) {
             ctx.state.handle_action(ctx.conn, menu::Action::Quit);
         } else if let Some(action) =
             ctx.state
-                .menu
+                .menu()
                 .get_action_at(local_x, local_y, &ctx.state.config)
         {
             ctx.state.handle_action(ctx.conn, action);
